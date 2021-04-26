@@ -39,9 +39,12 @@ try:
 except ImportError:
     import httplib
 import base64
+import collections
 import decimal
 import json
 import logging
+import os
+import socket
 try:
     import urllib.parse as urlparse
 except ImportError:
@@ -49,6 +52,7 @@ except ImportError:
 
 USER_AGENT = "AuthServiceProxy/0.1"
 
+DEFAULT_CONFIG_FILENAME = '~/.reddcoin/reddcoin.conf'
 HTTP_TIMEOUT = 30
 
 log = logging.getLogger("ReddcoinRPC")
@@ -80,13 +84,97 @@ def EncodeDecimal(o):
 class AuthServiceProxy(object):
     __id_count = 0
 
-    def __init__(self, service_url, service_name=None, timeout=HTTP_TIMEOUT, 
-                 connection=None, ssl_context=None):
+    # borrowed from pifkoin (https://github.com/dpifke/pifkoin)
+
+    def _parse_config(self, filename=DEFAULT_CONFIG_FILENAME, no_cache=False, **options):
+        """
+        Returns an OrderedDict with the Reddcoin server configuration.
+        Errors are logged; if the configuration file does not exist or could
+        not be read, an empty dictionary will be returned; it's up to the
+        caller whether or not this is a fatal error.
+        :param filename:
+            The filename from which the configuration should be read.  Defaults
+            to ``~/.reddcoin/reddcoin.conf``.
+        :param no_cache:
+            If :const:`True`, the configuration will not be memoized and any
+            previously memoized configuration will be ignored.
+        Any value from the configuration file can also be passed as an
+        argument in order to override the value read from disk.
+        """
+
+        if filename in getattr(type(self), '_config_cache', {}) and not no_cache:
+            config = type(self)._config_cache[filename].copy()
+        else:
+            # Note: I would have loved to use Python's ConfigParser for this,
+            # but it requires .ini-style section headings.
+            config = collections.OrderedDict()
+            try:
+                with open(os.path.expanduser(filename)) as conf:
+                    for lineno, line in enumerate(conf):
+                        comment = line.find('#')
+                        if comment != -1:
+                            line = line[:comment]
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        try:
+                            (var, val) = line.split('=')
+                        except ValueError:
+                            log.warning('Could not parse line %d of %s', lineno, filename)
+                            continue
+
+                        var = var.rstrip().lower()
+
+                        val = val.lstrip()
+                        if val[0] in ('"', "'") and val[1] in ('"', "'"):
+                            val = val[1:-1]
+
+                        config[var] = val
+
+                    conf.close()
+
+            except Exception as e:
+                log.error('%s reading %s: %s', type(e).__name__, filename, str(e))
+
+            log.debug('Read %d parameters from %s', len(config), filename)
+
+            if config and not no_cache:
+                # At least one parameter was read; memoize the results:
+                if not hasattr(type(self), '_config_cache'):
+                    type(self)._config_cache = {}
+                type(self)._config_cache[filename] = config.copy()
+
+        config.update(options)
+        return config
+
+    def __init__(self, service_url=None, service_name=None, connection=None,
+                 ssl_context=None, config_filename=DEFAULT_CONFIG_FILENAME, **config_options):
+
+        self.config_filename = config_filename
+        self.config_options = config_options
+        config = self._parse_config(self.config_filename, **self.config_options)
+
+        if service_url is None:
+            self._rpc_host = config.get('rpcserver', '127.0.0.1')
+            try:
+                socket.gethostbyname(self._rpc_host)
+            except socket.error as e:
+                raise JSONRPCException('Invalid RPC server %s: %s' % (self._rpc_host, str(e)))
+
+            try:
+                self._rpc_port = config.get('rpcport', 45443)
+                timeout = int(config.get('rpctimeout', HTTP_TIMEOUT))
+            except socket.error as e:
+                raise JSONRPCException('Error parsing RPC connection information from %s' % config_filename)
+
+            service_url = "http://%s:%s@%s:%s"%(config['rpcuser'], config['rpcpassword'], self._rpc_host, self._rpc_port)
+
         self.__service_url = service_url
         self.__service_name = service_name
         self.__url = urlparse.urlparse(service_url)
         if self.__url.port is None:
-            port = 80
+            port = 45443
         else:
             port = self.__url.port
         (user, passwd) = (self.__url.username, self.__url.password)
@@ -101,7 +189,7 @@ class AuthServiceProxy(object):
         authpair = user + b':' + passwd
         self.__auth_header = b'Basic ' + base64.b64encode(authpair)
 
-        self.__timeout = timeout
+        self.__timeout = timeout = int(config.get('rpctimeout', HTTP_TIMEOUT))
 
         if connection:
             # Callables re-use the connection of the original proxy
@@ -119,7 +207,8 @@ class AuthServiceProxy(object):
             raise AttributeError
         if self.__service_name is not None:
             name = "%s.%s" % (self.__service_name, name)
-        return AuthServiceProxy(self.__service_url, name, self.__timeout, self.__conn)
+        return AuthServiceProxy(service_url=self.__service_url, service_name=name, timeout=self.__timeout,
+                                connection=self.__conn, config_filename=self.config_filename, **self.config_options)
 
     def __call__(self, *args):
         AuthServiceProxy.__id_count += 1
