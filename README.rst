@@ -1,6 +1,6 @@
-=================
+==================
 python-reddcoinrpc
-=================
+==================
 
 AuthServiceProxy is an improved version of python-jsonrpc.
 
@@ -18,6 +18,7 @@ It also includes the following reddcoin-specific details:
 * sends Basic HTTP authentication headers
 * parses all JSON numbers that look like floats as Decimal,
   and serializes Decimal values to JSON-RPC connections.
+* read config from ~/.reddcoin/reddcoin.conf as default or specify a different path
 
 Installation
 ============
@@ -39,7 +40,7 @@ Example
     from reddcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 
     # rpc_user and rpc_password are set in the bitcoin.conf file
-    rpc_connection = AuthServiceProxy("http://%s:%s@127.0.0.1:8332"%(rpc_user, rpc_password))
+    rpc_connection = AuthServiceProxy()
     best_block_hash = rpc_connection.getbestblockhash()
     print(rpc_connection.getblock(best_block_hash))
 
@@ -60,7 +61,7 @@ Logging all RPC calls to stderr
     logging.basicConfig()
     logging.getLogger("ReddcoinRPC").setLevel(logging.DEBUG)
 
-    rpc_connection = AuthServiceProxy("http://%s:%s@127.0.0.1:8332"%(rpc_user, rpc_password))
+    rpc_connection = AuthServiceProxy()
     print(rpc_connection.getinfo())
 
 Produces output on stderr like
@@ -75,5 +76,4 @@ Pass the timeout argument to prevent "socket timed out" exceptions:
 .. code:: python
 
     rpc_connection = AuthServiceProxy(
-        "http://%s:%s@%s:%s"%(rpc_user, rpc_password, rpc_host, rpc_port),
-        timeout=120)
+                rpctimeout=120)
