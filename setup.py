@@ -4,7 +4,7 @@ from distutils.core import setup
 
 setup(
     name='python-reddcoinrpc',
-    version='1.0',
+    version='1.1',
     description='Enhanced version of python-jsonrpc for use with Reddcoin',
     long_description=open('README.rst').read(),
     author='John Nash',
